@@ -2,6 +2,8 @@
 import os
 from typing import Literal
 
+import requests
+
 # Try to import clients, handle gracefully if not installed
 try:
     from openai import OpenAI
@@ -71,8 +73,6 @@ def call_llm(
     
     elif llm == "ollama":
         # Use Ollama's local API
-        import requests
-        
         model = model or "llama3.2"
         url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
         
