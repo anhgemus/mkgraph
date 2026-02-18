@@ -1,7 +1,9 @@
 """Simple CLI for building knowledge graphs from markdown files."""
 import os
-import click
+import json
 from pathlib import Path
+
+import click
 
 from mkgraph.processor import process_file, process_directory
 
@@ -34,12 +36,26 @@ def cli():
     help="Model name (default varies by provider)",
 )
 @click.option(
+    "--batch-size",
+    "-b",
+    type=int,
+    default=5,
+    help="Number of files to process in each LLM call (for directories)",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
     help="Enable verbose logging",
 )
-def run(input_path: str, output: str, llm: str, model: str | None, verbose: bool):
+def run(
+    input_path: str,
+    output: str,
+    llm: str,
+    model: str | None,
+    batch_size: int,
+    verbose: bool
+):
     """Process a file or directory and create knowledge graph notes."""
     input_p = Path(input_path)
     output_p = Path(output)
@@ -50,6 +66,7 @@ def run(input_path: str, output: str, llm: str, model: str | None, verbose: bool
         click.echo(f"LLM: {llm}")
         if model:
             click.echo(f"Model: {model}")
+        click.echo(f"Batch size: {batch_size}")
     
     if input_p.is_file():
         click.echo(f"Processing file: {input_p}")
@@ -57,7 +74,14 @@ def run(input_path: str, output: str, llm: str, model: str | None, verbose: bool
         click.echo(f"✓ Done! Notes created in {output_p}")
     else:
         click.echo(f"Processing directory: {input_p}")
-        process_directory(input_p, output_p, llm=llm, model=model, verbose=verbose)
+        process_directory(
+            input_p,
+            output_p,
+            llm=llm,
+            model=model,
+            batch_size=batch_size,
+            verbose=verbose
+        )
         click.echo(f"✓ Done! Notes created in {output_p}")
 
 
@@ -78,7 +102,6 @@ def status(output: str):
         click.echo("No state file found. Run 'mkgraph run' first.")
         return
     
-    import json
     with open(state_file) as f:
         state = json.load(f)
     

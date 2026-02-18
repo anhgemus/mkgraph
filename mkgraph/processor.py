@@ -2,12 +2,13 @@
 import json
 import os
 import hashlib
+import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Literal
 
 from mkgraph.llm import call_llm
-from mkgraph.templates import get_extraction_prompt
+from mkgraph.templates import get_extraction_prompt, get_batch_extraction_prompt
 
 
 @dataclass
@@ -27,21 +28,48 @@ def compute_file_hash(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
+def normalize_entity_name(name: str) -> str:
+    """Normalize entity name for matching."""
+    return name.lower().strip().replace("_", " ").replace("-", " ")
+
+
 def extract_entities_from_content(content: str, llm: str = "openai", model: str | None = None) -> list[Entity]:
     """Call LLM to extract entities from markdown content."""
     prompt = get_extraction_prompt(content)
     
     response = call_llm(prompt, llm=llm, model=model)
     
+    return parse_entities_response(response, [])
+
+
+def extract_entities_from_batch(
+    files: list[tuple[str, str]],  # list of (path, content)
+    llm: str = "openai",
+    model: str | None = None
+) -> list[Entity]:
+    """Extract entities from multiple files in a single LLM call."""
+    prompt = get_batch_extraction_prompt(files)
+    
+    response = call_llm(prompt, llm=llm, model=model)
+    
+    paths = [f[0] for f in files]
+    return parse_entities_response(response, paths)
+
+
+def parse_entities_response(response: str, fallback_sources: list[str]) -> list[Entity]:
+    """Parse JSON response from LLM into Entity objects."""
     # Parse JSON response
     try:
         data = json.loads(response)
     except json.JSONDecodeError:
         # Try to extract JSON from response
-        import re
         match = re.search(r'\[.*\]', response, re.DOTALL)
         if match:
-            data = json.loads(match.group())
+            try:
+                data = json.loads(match.group())
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse LLM response as JSON: {response[:200]}")
+                return []
         else:
             print(f"Warning: Could not parse LLM response as JSON: {response[:200]}")
             return []
@@ -52,13 +80,51 @@ def extract_entities_from_content(content: str, llm: str = "openai", model: str 
         if entity_type not in ["person", "organization", "topic"]:
             continue
         
+        name = item.get("name", "").strip()
+        if not name:
+            continue
+        
+        # Get source - prefer source field from LLM, fallback to provided sources
+        source = item.get("source", "")
+        if not source and fallback_sources:
+            source = fallback_sources[0] if fallback_sources else ""
+        
         entities.append(Entity(
-            name=item.get("name", ""),
+            name=name,
             entity_type=entity_type,
             description=item.get("description", ""),
+            sources=[source] if source else []
         ))
     
     return entities
+
+
+def merge_entities(entity_lists: list[list[Entity]]) -> list[Entity]:
+    """Merge entities from multiple sources, combining duplicates."""
+    merged: dict[str, Entity] = {}
+    
+    for entities in entity_lists:
+        for entity in entities:
+            # Use normalized name as key
+            key = f"{normalize_entity_name(entity.name)}:{entity.entity_type}"
+            
+            if key in merged:
+                # Merge: add sources, combine descriptions
+                existing = merged[key]
+                
+                # Add new sources
+                for source in entity.sources:
+                    if source not in existing.sources:
+                        existing.sources.append(source)
+                
+                # Merge descriptions (prefer longer)
+                if entity.description and len(entity.description) > len(existing.description):
+                    existing.description = entity.description
+            else:
+                # Add new entity
+                merged[key] = entity
+    
+    return list(merged.values())
 
 
 def get_notes_dir(output_dir: Path) -> dict[str, Path]:
@@ -70,7 +136,23 @@ def get_notes_dir(output_dir: Path) -> dict[str, Path]:
     }
 
 
-def create_note(entity: Entity, output_dir: Path, source_file: str):
+def sanitize_filename(name: str) -> str:
+    """Sanitize name for use as filename."""
+    # Replace problematic characters
+    name = name.replace("/", "-").replace("\\", "-").replace(":", "-")
+    name = name.replace("*", "-").replace("?", "-").replace('"', "-")
+    name = name.replace("|", "-").replace("<", "-").replace(">", "-")
+    # Remove leading/trailing dots or spaces
+    name = name.strip(". ")
+    return name
+
+
+def create_or_update_note(
+    entity: Entity,
+    output_dir: Path,
+    source_file: str,
+    update_existing: bool = True
+):
     """Create or update a note for an entity."""
     notes_dir = get_notes_dir(output_dir)
     
@@ -85,54 +167,97 @@ def create_note(entity: Entity, output_dir: Path, source_file: str):
     note_dir.mkdir(parents=True, exist_ok=True)
     
     # Sanitize name for filename
-    filename = entity.name.replace("/", "-").replace("\\", "-")
+    filename = sanitize_filename(entity.name)
+    if not filename:
+        filename = "unnamed"
     note_path = note_dir / f"{filename}.md"
     
-    # Build note content
-    frontmatter = f"""---
-created: {json.dumps(entity.sources)}
+    # Check if note exists
+    if note_path.exists() and update_existing:
+        with open(note_path) as f:
+            existing_content = f.read()
+        
+        # Check if this source already linked
+        if source_file in existing_content:
+            # Just update description if needed
+            if entity.description and entity.description not in existing_content:
+                new_content = existing_content.rstrip() + f"\n\n{entity.description}\n"
+                with open(note_path, "w") as f:
+                    f.write(new_content)
+            return
+        
+        # Add new source to existing note
+        new_content = update_note_with_source(existing_content, entity, source_file)
+        
+        with open(note_path, "w") as f:
+            f.write(new_content)
+    else:
+        # Create new note
+        content = create_new_note(entity, source_file)
+        with open(note_path, "w") as f:
+            f.write(content)
+
+
+def create_new_note(entity: Entity, source_file: str) -> str:
+    """Create content for a new note."""
+    content = f"""---
 sources: {json.dumps([source_file])}
 ---
 
 # {entity.name}
 
 """
+    if entity.description:
+        content += f"{entity.description}\n"
     
-    # Check if note exists
-    if note_path.exists():
-        with open(note_path) as f:
-            existing = f.read()
-        
-        # Check if source already added
-        if source_file in existing:
-            return  # Already linked
-        
-        # Append to existing note
-        new_content = existing.rstrip() + f"\n\n## Sources\n\n- {source_file}\n"
-        
-        # Add description if new
-        if entity.description and entity.description not in existing:
-            # Insert description after frontmatter if not present
-            lines = existing.split("\n")
-            insert_idx = 0
-            for i, line in enumerate(lines):
-                if line.strip() == "---" and i > 0:
-                    insert_idx = i + 1
-                    break
-            lines.insert(insert_idx, f"\n{entity.description}\n")
-            new_content = "\n".join(lines)
-        
-        with open(note_path, "w") as f:
-            f.write(new_content)
-    else:
-        # Create new note
-        content = frontmatter
-        if entity.description:
-            content += f"{entity.description}\n"
-        content += f"\n## Sources\n\n- {source_file}\n"
-        
-        with open(note_path, "w") as f:
-            f.write(content)
+    content += f"\n## Sources\n\n- {source_file}\n"
+    
+    return content
+
+
+def update_note_with_source(existing_content: str, entity: Entity, source_file: str) -> str:
+    """Add a new source to an existing note."""
+    lines = existing_content.split("\n")
+    
+    # Find where to insert source (after sources list in frontmatter or at end)
+    in_frontmatter = False
+    frontmatter_end = -1
+    sources_line = -1
+    
+    for i, line in enumerate(lines):
+        if line.strip() == "---":
+            if not in_frontmatter:
+                in_frontmatter = True
+            else:
+                frontmatter_end = i
+                break
+        if in_frontmatter and line.strip().startswith("sources:"):
+            sources_line = i
+    
+    # Update frontmatter sources
+    if sources_line >= 0:
+        # Parse existing sources
+        sources_match = re.search(r'sources:\s*\[(.*?)\]', lines[sources_line])
+        if sources_match:
+            existing_sources = sources_match.group(1).strip('"').split('","')
+            if source_file not in "".join(existing_sources):
+                # Add new source to list
+                existing_sources.append(f'"{source_file}"')
+                lines[sources_line] = f"sources: [{', '.join(existing_sources)}]"
+    
+    # Add to Sources section if exists, otherwise create it
+    sources_section_found = False
+    for i, line in enumerate(lines):
+        if line.strip().lower() == "## sources":
+            sources_section_found = True
+            # Add source after this line
+            lines.insert(i + 1, f"- {source_file}")
+            break
+    
+    if not sources_section_found:
+        lines.append(f"\n## Sources\n\n- {source_file}")
+    
+    return "\n".join(lines)
 
 
 def process_file(
@@ -159,11 +284,50 @@ def process_file(
     
     for entity in entities:
         entity.sources.append(str(file_path))
-        create_note(entity, output_dir, str(file_path))
+        create_or_update_note(entity, output_dir, str(file_path))
         if verbose:
             print(f"  - {entity.entity_type}: {entity.name}")
     
     return entities
+
+
+def process_batch(
+    file_paths: list[Path],
+    output_dir: Path,
+    llm: str = "openai",
+    model: str | None = None,
+    verbose: bool = False
+) -> list[Entity]:
+    """Process multiple files in a single LLM call."""
+    if not file_paths:
+        return []
+    
+    # Read all file contents
+    files: list[tuple[str, str]] = []
+    for fp in file_paths:
+        with open(fp) as f:
+            files.append((str(fp), f.read()))
+    
+    if verbose:
+        print(f"Extracting entities from {len(files)} files in batch...")
+    
+    # Extract entities in one call
+    entities = extract_entities_from_batch(files, llm=llm, model=model)
+    
+    # Merge entities that appear across files
+    merged = merge_entities([entities])
+    
+    if verbose:
+        print(f"Found {len(merged)} unique entities")
+    
+    # Create/update notes
+    for entity in merged:
+        for source in entity.sources:
+            create_or_update_note(entity, output_dir, source)
+        if verbose:
+            print(f"  - {entity.entity_type}: {entity.name} (from {len(entity.sources)} files)")
+    
+    return merged
 
 
 def process_directory(
@@ -171,13 +335,35 @@ def process_directory(
     output_dir: Path,
     llm: str = "openai",
     model: str | None = None,
+    batch_size: int = 5,
     verbose: bool = False
 ):
-    """Process all markdown files in a directory."""
+    """Process all markdown files in a directory with batching."""
     md_files = list(input_dir.glob("**/*.md"))
     
     if verbose:
         print(f"Found {len(md_files)} markdown files")
     
-    for md_file in md_files:
-        process_file(md_file, output_dir, llm=llm, model=model, verbose=verbose)
+    if not md_files:
+        if verbose:
+            print("No markdown files found")
+        return
+    
+    total_entities = []
+    
+    # Process in batches
+    for i in range(0, len(md_files), batch_size):
+        batch = md_files[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+        total_batches = (len(md_files) + batch_size - 1) // batch_size
+        
+        if verbose:
+            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} files)...")
+        
+        entities = process_batch(batch, output_dir, llm=llm, model=model, verbose=verbose)
+        total_entities.extend(entities)
+    
+    if verbose:
+        print(f"Total: {len(total_entities)} unique entities extracted")
+    
+    return total_entities

@@ -130,3 +130,70 @@ class TestEntity:
         entity = Entity(name="Test", entity_type="topic")
         
         assert entity.sources == []
+
+
+class TestMergeEntities:
+    """Tests for merge_entities function."""
+
+    def test_merge_same_entity(self):
+        """Should merge entities with same name and type."""
+        from mkgraph.processor import merge_entities
+        
+        entities1 = [
+            Entity(name="John", entity_type="person", description="First", sources=["file1.md"]),
+        ]
+        entities2 = [
+            Entity(name="John", entity_type="person", description="Second", sources=["file2.md"]),
+        ]
+        
+        merged = merge_entities([entities1, entities2])
+        
+        assert len(merged) == 1
+        assert len(merged[0].sources) == 2
+        assert "file1.md" in merged[0].sources
+        assert "file2.md" in merged[0].sources
+
+    def test_merge_different_entities(self):
+        """Should keep different entities separate."""
+        from mkgraph.processor import merge_entities
+        
+        entities1 = [
+            Entity(name="John", entity_type="person", description="Person", sources=["file1.md"]),
+        ]
+        entities2 = [
+            Entity(name="Acme", entity_type="organization", description="Org", sources=["file2.md"]),
+        ]
+        
+        merged = merge_entities([entities1, entities2])
+        
+        assert len(merged) == 2
+
+    def test_merge_keeps_longer_description(self):
+        """Should keep longer description when merging."""
+        from mkgraph.processor import merge_entities
+        
+        entities1 = [
+            Entity(name="John", entity_type="person", description="Short", sources=["file1.md"]),
+        ]
+        entities2 = [
+            Entity(name="John", entity_type="person", description="Much longer description here", sources=["file2.md"]),
+        ]
+        
+        merged = merge_entities([entities1, entities2])
+        
+        assert merged[0].description == "Much longer description here"
+
+    def test_merge_case_insensitive(self):
+        """Should merge entities regardless of case."""
+        from mkgraph.processor import merge_entities
+        
+        entities1 = [
+            Entity(name="John Smith", entity_type="person", description="Person", sources=["file1.md"]),
+        ]
+        entities2 = [
+            Entity(name="john smith", entity_type="person", description="Same", sources=["file2.md"]),
+        ]
+        
+        merged = merge_entities([entities1, entities2])
+        
+        assert len(merged) == 1
