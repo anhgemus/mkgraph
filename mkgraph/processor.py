@@ -5,11 +5,12 @@ import hashlib
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
 from mkgraph.llm import call_llm
 from mkgraph.templates import get_extraction_prompt, get_batch_extraction_prompt
 from mkgraph.state import load_state, save_state, mark_file_processed, get_unprocessed_files
+from mkgraph import config as config_module
 
 
 @dataclass
@@ -128,12 +129,17 @@ def merge_entities(entity_lists: list[list[Entity]]) -> list[Entity]:
     return list(merged.values())
 
 
-def get_notes_dir(output_dir: Path) -> dict[str, Path]:
+def get_notes_dir(output_dir: Path, config: Optional[config_module.Config] = None) -> dict[str, Path]:
     """Get note directory paths."""
+    if config is None:
+        config = config_module.load_config()
+    
+    defaults = config_module.get_default_output_directories()
+    
     return {
-        "people": output_dir / "People",
-        "organizations": output_dir / "Organizations",
-        "topics": output_dir / "Topics",
+        "people": output_dir / config.output_directories.get("person", defaults.get("person", "People")),
+        "organizations": output_dir / config.output_directories.get("organization", defaults.get("organization", "Organizations")),
+        "topics": output_dir / config.output_directories.get("topic", defaults.get("topic", "Topics")),
     }
 
 
@@ -152,10 +158,11 @@ def create_or_update_note(
     entity: Entity,
     output_dir: Path,
     source_file: str,
-    update_existing: bool = True
+    update_existing: bool = True,
+    config: Optional[config_module.Config] = None
 ):
     """Create or update a note for an entity."""
-    notes_dir = get_notes_dir(output_dir)
+    notes_dir = get_notes_dir(output_dir, config)
     
     if entity.entity_type == "person":
         note_dir = notes_dir["people"]
@@ -266,7 +273,8 @@ def process_file(
     output_dir: Path,
     llm: str = "openai",
     model: str | None = None,
-    verbose: bool = False
+    verbose: bool = False,
+    config: Optional[config_module.Config] = None
 ):
     """Process a single markdown file and extract entities."""
     if verbose:
@@ -280,12 +288,16 @@ def process_file(
     
     entities = extract_entities_from_content(content, llm=llm, model=model)
     
+    # Filter to enabled entity types
+    if config:
+        entities = [e for e in entities if config_module.is_entity_enabled(e.entity_type, config)]
+    
     if verbose:
         print(f"Found {len(entities)} entities")
     
     for entity in entities:
         entity.sources.append(str(file_path))
-        create_or_update_note(entity, output_dir, str(file_path))
+        create_or_update_note(entity, output_dir, str(file_path), config=config)
         if verbose:
             print(f"  - {entity.entity_type}: {entity.name}")
     
@@ -297,7 +309,8 @@ def process_batch(
     output_dir: Path,
     llm: str = "openai",
     model: str | None = None,
-    verbose: bool = False
+    verbose: bool = False,
+    config: Optional[config_module.Config] = None
 ) -> list[Entity]:
     """Process multiple files in a single LLM call."""
     if not file_paths:
@@ -315,6 +328,10 @@ def process_batch(
     # Extract entities in one call
     entities = extract_entities_from_batch(files, llm=llm, model=model)
     
+    # Filter to enabled entity types
+    if config:
+        entities = [e for e in entities if config_module.is_entity_enabled(e.entity_type, config)]
+    
     # Merge entities that appear across files
     merged = merge_entities([entities])
     
@@ -324,7 +341,7 @@ def process_batch(
     # Create/update notes
     for entity in merged:
         for source in entity.sources:
-            create_or_update_note(entity, output_dir, source)
+            create_or_update_note(entity, output_dir, source, config=config)
         if verbose:
             print(f"  - {entity.entity_type}: {entity.name} (from {len(entity.sources)} files)")
     
@@ -339,7 +356,8 @@ def process_directory(
     batch_size: int = 5,
     verbose: bool = False,
     use_state: bool = True,
-    force: bool = False
+    force: bool = False,
+    config: Optional[config_module.Config] = None
 ):
     """Process all markdown files in a directory with batching and state tracking."""
     md_files = list(input_dir.glob("**/*.md"))
@@ -384,7 +402,7 @@ def process_directory(
         if verbose:
             print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} files)...")
         
-        entities = process_batch(batch, output_dir, llm=llm, model=model, verbose=verbose)
+        entities = process_batch(batch, output_dir, llm=llm, model=model, verbose=verbose, config=config)
         
         # Mark files as processed
         if use_state:
