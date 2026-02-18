@@ -6,6 +6,7 @@ from pathlib import Path
 import click
 
 from mkgraph.processor import process_file, process_directory
+from mkgraph.state import load_state, reset_state
 
 
 @click.group()
@@ -48,13 +49,25 @@ def cli():
     is_flag=True,
     help="Enable verbose logging",
 )
+@click.option(
+    "--no-state",
+    is_flag=True,
+    help="Disable state tracking (process all files every time)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force reprocess all files, ignoring state",
+)
 def run(
     input_path: str,
     output: str,
     llm: str,
     model: str | None,
     batch_size: int,
-    verbose: bool
+    verbose: bool,
+    no_state: bool,
+    force: bool
 ):
     """Process a file or directory and create knowledge graph notes."""
     input_p = Path(input_path)
@@ -67,6 +80,9 @@ def run(
         if model:
             click.echo(f"Model: {model}")
         click.echo(f"Batch size: {batch_size}")
+        click.echo(f"State tracking: {'disabled' if no_state else 'enabled'}")
+        if force:
+            click.echo(f"Force reprocess: enabled")
     
     if input_p.is_file():
         click.echo(f"Processing file: {input_p}")
@@ -80,7 +96,9 @@ def run(
             llm=llm,
             model=model,
             batch_size=batch_size,
-            verbose=verbose
+            verbose=verbose,
+            use_state=not no_state,
+            force=force
         )
         click.echo(f"✓ Done! Notes created in {output_p}")
 
@@ -95,18 +113,17 @@ def run(
 )
 def status(output: str):
     """Show processing status and statistics."""
-    output_p = Path(output)
-    state_file = Path.home() / ".mkgraph" / "state.json"
+    state = load_state()
     
-    if not state_file.exists():
-        click.echo("No state file found. Run 'mkgraph run' first.")
-        return
-    
-    with open(state_file) as f:
-        state = json.load(f)
-    
-    click.echo(f"Processed files: {len(state.get('processed_files', {}))}")
-    click.echo(f"Last run: {state.get('last_run', 'Never')}")
+    click.echo(f"Processed files: {len(state.processed_files)}")
+    click.echo(f"Last run: {state.last_run or 'Never'}")
+
+
+@cli.command()
+def reset():
+    """Reset state (clear all processed file tracking)."""
+    reset_state()
+    click.echo("State reset. All files will be reprocessed on next run.")
 
 
 def main():

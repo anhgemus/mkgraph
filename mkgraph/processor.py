@@ -9,6 +9,7 @@ from typing import Literal
 
 from mkgraph.llm import call_llm
 from mkgraph.templates import get_extraction_prompt, get_batch_extraction_prompt
+from mkgraph.state import load_state, save_state, mark_file_processed, get_unprocessed_files
 
 
 @dataclass
@@ -336,9 +337,11 @@ def process_directory(
     llm: str = "openai",
     model: str | None = None,
     batch_size: int = 5,
-    verbose: bool = False
+    verbose: bool = False,
+    use_state: bool = True,
+    force: bool = False
 ):
-    """Process all markdown files in a directory with batching."""
+    """Process all markdown files in a directory with batching and state tracking."""
     md_files = list(input_dir.glob("**/*.md"))
     
     if verbose:
@@ -349,19 +352,52 @@ def process_directory(
             print("No markdown files found")
         return
     
+    # Load state for change detection
+    state = load_state() if use_state else None
+    
+    # Filter to only unprocessed/changed files
+    if use_state and not force:
+        files_to_process = get_unprocessed_files(md_files, state)
+        if verbose:
+            skipped = len(md_files) - len(files_to_process)
+            if skipped > 0:
+                print(f"Skipping {skipped} unchanged files")
+    else:
+        files_to_process = md_files
+    
+    if not files_to_process:
+        if verbose:
+            print("All files already processed (use --force to reprocess)")
+        return
+    
+    if verbose:
+        print(f"Processing {len(files_to_process)} files")
+    
     total_entities = []
     
     # Process in batches
-    for i in range(0, len(md_files), batch_size):
-        batch = md_files[i:i + batch_size]
+    for i in range(0, len(files_to_process), batch_size):
+        batch = files_to_process[i:i + batch_size]
         batch_num = (i // batch_size) + 1
-        total_batches = (len(md_files) + batch_size - 1) // batch_size
+        total_batches = (len(files_to_process) + batch_size - 1) // batch_size
         
         if verbose:
             print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} files)...")
         
         entities = process_batch(batch, output_dir, llm=llm, model=model, verbose=verbose)
+        
+        # Mark files as processed
+        if use_state:
+            for fp in batch:
+                mark_file_processed(fp, state)
+        
         total_entities.extend(entities)
+    
+    # Save state
+    if use_state and state:
+        import datetime
+        state.last_run = datetime.datetime.now().isoformat()
+        save_state(state)
     
     if verbose:
         print(f"Total: {len(total_entities)} unique entities extracted")
