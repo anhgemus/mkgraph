@@ -1,10 +1,8 @@
 """Configuration management for mkgraph."""
 import json
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
-import os
-
 
 CONFIG_DIR = Path.home() / ".mkgraph"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -58,19 +56,19 @@ class Config:
     """Main configuration for mkgraph."""
     # Entity types
     entity_types: list[str] = field(default_factory=lambda: DEFAULT_ENTITY_TYPES.copy())
-    
+
     # Custom entity type configs
     entity_type_config: dict[str, EntityTypeConfig] = field(default_factory=dict)
-    
+
     # LLM settings
     llm: LLMConfig = field(default_factory=LLMConfig)
-    
+
     # Template settings
     template: TemplateConfig = field(default_factory=TemplateConfig)
-    
+
     # Output settings
     output_directories: dict[str, str] = field(default_factory=dict)
-    
+
     # Strictness
     strictness: str = "medium"  # "high", "medium", "low"
 
@@ -92,26 +90,26 @@ def get_default_output_directories() -> dict[str, str]:
 def load_config() -> Config:
     """Load configuration from file."""
     ensure_config_dir()
-    
+
     if not CONFIG_FILE.exists():
         return Config()
-    
+
     with open(CONFIG_FILE) as f:
         data = json.load(f)
-    
+
     # Parse entity type config
     entity_type_config = {}
     for etype, et_config in data.get("entity_type_config", {}).items():
         entity_type_config[etype] = EntityTypeConfig(**et_config)
-    
+
     # Parse LLM config
     llm_data = data.get("llm", {})
     llm_config = LLMConfig(**llm_data) if llm_data else LLMConfig()
-    
+
     # Parse template config
     template_data = data.get("template", {})
     template_config = TemplateConfig(**template_data) if template_data else TemplateConfig()
-    
+
     return Config(
         entity_types=data.get("entity_types", DEFAULT_ENTITY_TYPES.copy()),
         entity_type_config=entity_type_config,
@@ -125,7 +123,7 @@ def load_config() -> Config:
 def save_config(config: Config):
     """Save configuration to file."""
     ensure_config_dir()
-    
+
     # Convert to dict, handling dataclasses
     data = {
         "entity_types": config.entity_types,
@@ -151,7 +149,7 @@ def save_config(config: Config):
         "output_directories": config.output_directories,
         "strictness": config.strictness,
     }
-    
+
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -160,7 +158,7 @@ def get_entity_directory(entity_type: str, config: Optional[Config] = None) -> s
     """Get output directory for an entity type."""
     if config and config.output_directories.get(entity_type):
         return config.output_directories[entity_type]
-    
+
     defaults = get_default_output_directories()
     return defaults.get(entity_type, entity_type.title() + "s")
 
@@ -171,10 +169,10 @@ def get_entity_template(entity_type: str, config: Optional[Config] = None) -> st
         custom = config.entity_type_config[entity_type]
         if custom.template:
             return custom.template
-    
+
     if config and config.template.body:
         return config.template.body
-    
+
     return DEFAULT_TEMPLATE
 
 
@@ -182,16 +180,16 @@ def is_entity_enabled(entity_type: str, config: Optional[Config] = None) -> bool
     """Check if an entity type is enabled."""
     if config and config.entity_type_config.get(entity_type):
         return config.entity_type_config[entity_type].enabled
-    
+
     if config:
         return entity_type in config.entity_types
-    
+
     return entity_type in DEFAULT_ENTITY_TYPES
 
 
 def reset_config():
     """Reset config to defaults."""
     ensure_config_dir()
-    
+
     if CONFIG_FILE.exists():
         CONFIG_FILE.unlink()

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import click
 
-from mkgraph.processor import process_file, process_directory
-from mkgraph.state import load_state, reset_state
 from mkgraph import config as config_module
+from mkgraph.processor import process_directory, process_file
+from mkgraph.state import load_state
 
 
 @click.group()
@@ -73,16 +73,16 @@ def run(
     """Process a file or directory and create knowledge graph notes."""
     # Load config
     cfg = config_module.load_config()
-    
+
     # CLI args override config
     if llm:
         cfg.llm.provider = llm
     if model:
         cfg.llm.model = model
-    
+
     input_p = Path(input_path)
     output_p = Path(output)
-    
+
     if verbose:
         click.echo(f"Input: {input_p}")
         click.echo(f"Output: {output_p}")
@@ -92,8 +92,8 @@ def run(
         click.echo(f"Batch size: {batch_size}")
         click.echo(f"State tracking: {'disabled' if no_state else 'enabled'}")
         if force:
-            click.echo(f"Force reprocess: enabled")
-    
+            click.echo("Force reprocess: enabled")
+
     if input_p.is_file():
         click.echo(f"Processing file: {input_p}")
         process_file(input_p, output_p, llm=cfg.llm.provider, model=cfg.llm.model, verbose=verbose, config=cfg)
@@ -118,7 +118,7 @@ def run(
 def status():
     """Show processing status and statistics."""
     state = load_state()
-    
+
     click.echo(f"Processed files: {len(state.processed_files)}")
     click.echo(f"Last run: {state.last_run or 'Never'}")
 
@@ -144,14 +144,14 @@ def init():
 @click.option("--list", "list_all", is_flag=True, help="List all config settings")
 def config(key: str | None, value: str | None, list_all: bool):
     """Get or set configuration values.
-    
+
     Examples:
         mkgraph config              # Show all config
         mkgraph config llm.provider # Get a value
         mkgraph config llm.provider ollama  # Set a value
     """
     cfg = config_module.load_config()
-    
+
     if list_all:
         # Show all config as JSON
         click.echo(json.dumps({
@@ -165,16 +165,16 @@ def config(key: str | None, value: str | None, list_all: bool):
             "strictness": cfg.strictness,
         }, indent=2))
         return
-    
+
     if not key:
         click.echo(f"Config file: {config_module.CONFIG_FILE}")
         click.echo("Use 'mkgraph config --list' to see all settings")
         click.echo("Use 'mkgraph config <key> <value>' to set a value")
         return
-    
+
     # Get or set a value
     parts = key.split(".")
-    
+
     if not value:
         # Get value
         if len(parts) == 1:

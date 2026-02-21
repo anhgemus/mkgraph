@@ -48,7 +48,7 @@ Given multiple markdown files, extract all relevant entities and return a JSON a
 ## Entity Types
 
 1. **person** - Individual people mentioned (by name)
-2. **organization** - Companies, teams, groups, institutions  
+2. **organization** - Companies, teams, groups, institutions
 3. **topic** - Projects, products, concepts, events
 
 ## Rules
@@ -70,11 +70,11 @@ Given multiple markdown files, extract all relevant entities and return a JSON a
 ```
 
 """
-    
+
     # Add each file's content
     for i, (path, content) in enumerate(files, 1):
         filename = path.split("/")[-1]
         prompt += f"\n## File {i}: {filename}\n\n{content}\n"
-    
+
     prompt += "\n\nReturn the JSON array now:"
     return prompt

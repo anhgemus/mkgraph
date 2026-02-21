@@ -1,10 +1,9 @@
 """State management for tracking processed files."""
-import json
 import hashlib
-from pathlib import Path
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
-
 
 STATE_DIR = Path.home() / ".mkgraph"
 STATE_FILE = STATE_DIR / "state.json"
@@ -33,13 +32,13 @@ def ensure_state_dir():
 def load_state() -> State:
     """Load state from file."""
     ensure_state_dir()
-    
+
     if not STATE_FILE.exists():
         return State()
-    
+
     with open(STATE_FILE) as f:
         data = json.load(f)
-    
+
     processed_files = {}
     for path, file_data in data.get("processed_files", {}).items():
         processed_files[path] = FileState(
@@ -47,7 +46,7 @@ def load_state() -> State:
             hash=file_data["hash"],
             last_processed=file_data["last_processed"]
         )
-    
+
     return State(
         processed_files=processed_files,
         last_run=data.get("last_run")
@@ -57,7 +56,7 @@ def load_state() -> State:
 def save_state(state: State):
     """Save state to file."""
     ensure_state_dir()
-    
+
     data = {
         "processed_files": {
             path: {
@@ -69,7 +68,7 @@ def save_state(state: State):
         },
         "last_run": state.last_run
     }
-    
+
     with open(STATE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -85,17 +84,16 @@ def compute_file_hash(file_path: Path) -> str:
 def has_file_changed(file_path: Path, state: State) -> bool:
     """Check if a file has changed since last processing."""
     path_str = str(file_path)
-    
+
     if path_str not in state.processed_files:
         return True  # Never processed
-    
+
     stored = state.processed_files[path_str]
-    
+
     # Quick check: compare mtime
     try:
-        current_mtime = file_path.stat().st_mtime
-        stored_mtime = stored.hash  # We store hash, not mtime actually
-        
+        file_path.stat().st_mtime
+
         # Compare current hash with stored
         current_hash = compute_file_hash(file_path)
         return current_hash != stored.hash
@@ -106,7 +104,7 @@ def has_file_changed(file_path: Path, state: State) -> bool:
 def mark_file_processed(file_path: Path, state: State):
     """Mark a file as processed."""
     path_str = str(file_path)
-    
+
     state.processed_files[path_str] = FileState(
         path=path_str,
         hash=compute_file_hash(file_path),
@@ -117,7 +115,7 @@ def mark_file_processed(file_path: Path, state: State):
 def reset_state():
     """Reset all state (clear processed files)."""
     ensure_state_dir()
-    
+
     if STATE_FILE.exists():
         STATE_FILE.unlink()
 
