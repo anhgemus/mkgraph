@@ -253,7 +253,7 @@ def load_entities_from_directory(directory: Path) -> list[Entity]:
     """Load entities from a knowledge graph directory."""
     entities = []
 
-    for entity_type in ["people", "organizations", "topics"]:
+    for entity_type in ["People", "Organizations", "Topics"]:
         type_dir = directory / entity_type
         if not type_dir.exists():
             continue

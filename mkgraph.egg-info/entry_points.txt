@@ -1,0 +1,2 @@
+[console_scripts]
+mkgraph = mkgraph.cli:main

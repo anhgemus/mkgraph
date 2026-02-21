@@ -145,7 +145,7 @@ def init():
 
 
 @cli.command()
-@click.argument("input_path", type=click.Path(exists=True))
+@click.argument("input_directory", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
 @click.option(
     "--format",
